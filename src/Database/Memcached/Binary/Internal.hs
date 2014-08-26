@@ -65,7 +65,7 @@ close (Connection mv) = do
     h <- swapMVar mv (error "connection already closed")
     quit h
     hClose h
-close _ = return ()
+close (ConnectionPool p) = destroyAllResources p
 
 useConnection :: (Handle -> IO a) -> Connection -> IO a
 useConnection f (Connection    mv) = withMVar mv f
