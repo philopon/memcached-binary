@@ -27,7 +27,7 @@ import qualified Data.ByteString.Lazy as L
 import qualified Data.ByteString.Unsafe as S
 
 import Database.Memcached.Binary.Types
-import Database.Memcached.Binary.Exception
+import Database.Memcached.Binary.Types.Exception
 import Database.Memcached.Binary.Internal.Definition
 
 data Connection
@@ -65,7 +65,7 @@ close (Connection mv) = do
     h <- swapMVar mv (error "connection already closed")
     quit h
     hClose h
-close _ = return ()
+close (ConnectionPool p) = destroyAllResources p
 
 useConnection :: (Handle -> IO a) -> Connection -> IO a
 useConnection f (Connection    mv) = withMVar mv f
@@ -186,34 +186,45 @@ inspectResponse h p = do
     v <- L.hGet h $ fromIntegral tl - fromIntegral el - fromIntegral kl
     return (e,k,v)
 
-getSuccessCallback :: (CAS -> Flags -> Value -> IO a)
+getSuccessCallback :: (Flags -> Value -> IO a)
                    -> Handle -> Ptr Header -> IO a
 getSuccessCallback success h p = do
     elen <- getExtraLength p
     tlen <- getTotalLength p
-    cas  <- getCAS p
     void $ hGetBuf h p 4
     flags <- peekWord32be p
     value <- L.hGet h (fromIntegral tlen - fromIntegral elen)
-    success cas flags value
+    success flags value
 
-get :: (CAS -> Flags -> Value -> IO a) -> Failure a
+get :: (Flags -> Value -> IO a) -> Failure a
     -> Key -> Handle -> IO a
 get success failure key = 
     withRequest opGet key 0 nop 0 nop (CAS 0)
     (getSuccessCallback success) failure
 
-setAddReplace :: (CAS -> IO a) -> Failure a -> OpCode -> CAS
+getWithCAS :: (CAS -> Flags -> Value -> IO a) -> Failure a
+           -> Key -> Handle -> IO a
+getWithCAS success failure key =
+    withRequest opGet key 0 nop 0 nop (CAS 0)
+    (\h p -> getCAS p >>= \c -> getSuccessCallback (success c) h p) failure
+
+setAddReplace :: IO a -> Failure a -> OpCode -> CAS
               -> Key -> Value -> Flags -> Expiry -> Handle -> IO a
 setAddReplace success failure o cas key value flags expiry = withRequest o key
         8 (\p -> pokeWord32be p flags >> pokeWord32be (plusPtr p 4) expiry) 
+        (fromIntegral $ L.length value) (flip pokeLazyByteString value) cas (\_ _ -> success) failure
+
+setAddReplaceWithCAS :: (CAS -> IO a) -> Failure a -> OpCode -> CAS
+                     -> Key -> Value -> Flags -> Expiry -> Handle -> IO a
+setAddReplaceWithCAS success failure o cas key value flags expiry = withRequest o key
+        8 (\p -> pokeWord32be p flags >> pokeWord32be (plusPtr p 4) expiry) 
         (fromIntegral $ L.length value) (flip pokeLazyByteString value) cas (\_ p -> getCAS p >>= success) failure
 
-delete :: (CAS -> IO a) -> Failure a -> CAS -> Key -> Handle -> IO a
+delete :: IO a -> Failure a -> CAS -> Key -> Handle -> IO a
 delete success failure cas key =
-    withRequest opDelete key 0 nop 0 nop cas (\_ p -> getCAS p >>= success) failure
+    withRequest opDelete key 0 nop 0 nop cas (\_ _ -> success) failure
 
-incrDecr :: (CAS -> Word64 -> IO a) -> Failure a -> OpCode -> CAS
+incrDecr :: (Word64 -> IO a) -> Failure a -> OpCode -> CAS
          -> Key -> Delta -> Initial -> Expiry -> Handle -> IO a
 incrDecr success failure op cas key delta initial expiry =
     withRequest op key 20 extra 0 nop cas success' failure
@@ -224,9 +235,8 @@ incrDecr success failure op cas key delta initial expiry =
         pokeWord32be (plusPtr p 16) expiry
 
     success' h p = do
-        c <- getCAS p
         void $ hGetBuf h p 8
-        peekWord64be p >>= success c
+        peekWord64be p >>= success
 
 quit :: Handle -> IO ()
 quit h = do
@@ -251,11 +261,11 @@ version success =
     withRequest opVersion "" 0 nop 0 nop (CAS 0)
     (\h p -> getTotalLength p >>= S.hGet h . fromIntegral >>= success)
 
-appendPrepend :: (CAS -> IO a) -> Failure a -> OpCode -> CAS
+appendPrepend :: IO a -> Failure a -> OpCode -> CAS
               -> Key -> Value -> Handle -> IO a
 appendPrepend success failure op cas key value = withRequest op key 0 nop
     (fromIntegral $ L.length value) (flip pokeLazyByteString value)
-    cas (\_ -> getCAS >=> success) failure
+    cas (\_ _ -> success) failure
 
 stats :: Handle -> IO (H.HashMap S.ByteString S.ByteString)
 stats h = loop H.empty
@@ -277,7 +287,7 @@ verbosity :: IO a -> Failure a -> Word32 -> Handle -> IO a
 verbosity success failure v = withRequest opVerbosity ""
     4 (flip pokeWord32be v) 0 nop (CAS 0) (\_ _ -> success) failure
 
-touch :: (CAS -> Flags -> Value -> IO a) -> Failure a -> OpCode
+touch :: (Flags -> Value -> IO a) -> Failure a -> OpCode
       -> Key -> Expiry -> Handle -> IO a
 touch success failure op key e =
     withRequest op key 4 (flip pokeWord32be e) 0 nop (CAS 0)

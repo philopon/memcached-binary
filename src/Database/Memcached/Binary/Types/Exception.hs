@@ -1,7 +1,7 @@
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE CPP #-}
 
-module Database.Memcached.Binary.Exception where
+module Database.Memcached.Binary.Types.Exception where
 
 import Control.Exception
 import Data.Word
