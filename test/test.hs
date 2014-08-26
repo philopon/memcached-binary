@@ -19,7 +19,7 @@ import Data.Typeable
 import qualified Data.ByteString.Char8 as S
 import qualified Data.ByteString.Lazy.Char8 as L
 
-import Database.Memcached.Binary.Exception
+import Database.Memcached.Binary.Types.Exception
 import Database.Memcached.Binary.IO (Connection, withConnection)
 import qualified Database.Memcached.Binary.IO    as McIO
 import qualified Database.Memcached.Binary.Maybe as McMaybe
