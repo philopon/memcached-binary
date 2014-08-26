@@ -23,6 +23,10 @@ data ConnectInfo = ConnectInfo
     , connectionIdleTime :: NominalDiffTime
     } deriving Show
 
+-- | 
+-- @
+-- def = ConnectInfo "localhost" (PortNumber 11211) [] 1 20
+-- @
 instance Default ConnectInfo where
     def = ConnectInfo "localhost" (PortNumber 11211) [] 1 20
 

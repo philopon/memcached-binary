@@ -1,0 +1,46 @@
+    ( -- * connection
+      I.Connection, I.withConnection, I.connect, I.close
+      -- * get
+    , get, get_
+      -- * set
+    , set, add,  replace
+      -- * delete
+    , delete
+      -- * increment/decrement
+    , increment,  decrement
+      -- * flush
+    , flushAll
+    -- * version
+    , version
+    -- * noOp
+    , noOp
+    -- * append/prepend
+    , append,  prepend
+    -- * touch
+    , touch
+    , getAndTouch
+    , getAndTouch_
+
+    -- * modify
+    , modify, modify_
+    -- * reexports
+    , module Database.Memcached.Binary.Types
+    , module Database.Memcached.Binary.Types.Exception
+    -- | def
+    , module Data.Default.Class
+    -- | PortID(..)
+    , module Network
+    ) where
+
+import Network(PortID(..))
+
+import Data.Default.Class(def)
+
+import qualified Data.ByteString as S
+
+import Database.Memcached.Binary.Types
+import Database.Memcached.Binary.Types.Exception
+import Database.Memcached.Binary.Internal.Definition
+import qualified Database.Memcached.Binary.Internal as I
+
+

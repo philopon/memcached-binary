@@ -27,7 +27,7 @@ import qualified Data.ByteString.Lazy as L
 import qualified Data.ByteString.Unsafe as S
 
 import Database.Memcached.Binary.Types
-import Database.Memcached.Binary.Exception
+import Database.Memcached.Binary.Types.Exception
 import Database.Memcached.Binary.Internal.Definition
 
 data Connection

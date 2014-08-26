@@ -12,8 +12,12 @@ cabal-version:       >=1.10
 
 library
   exposed-modules:     Database.Memcached.Binary
-                       Database.Memcached.Binary.Exception
+                       Database.Memcached.Binary.Maybe
+                       Database.Memcached.Binary.Either
+                       Database.Memcached.Binary.IO
+
                        Database.Memcached.Binary.Types
+                       Database.Memcached.Binary.Types.Exception
                        Database.Memcached.Binary.Internal
                        Database.Memcached.Binary.Internal.Definition
   build-depends:       base                 >=4.6  && <4.8
@@ -40,4 +44,6 @@ test-suite test
                      , test-framework-hunit >=0.3  && <0.4
                      , process              >=1.2  && <1.3
                      , network              >=2.6  && <2.7
+                     , HUnit                >=1.2  && <1.3
+                     , bytestring           >=0.10 && <0.11
   default-language:    Haskell2010
