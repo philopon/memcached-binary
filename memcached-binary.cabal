@@ -9,6 +9,8 @@ copyright:           (c) 2014 Hirotomo Moriwaki
 category:            Database
 build-type:          Simple
 cabal-version:       >=1.10
+extra-source-files:  src/Database/Memcached/Binary/Common.hs
+                     src/Database/Memcached/Binary/Header.txt
 
 library
   exposed-modules:     Database.Memcached.Binary
