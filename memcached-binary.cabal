@@ -1,5 +1,5 @@
 name:                memcached-binary
-version:             0.1.0
+version:             0.1.1
 synopsis:            memcached client using binary protocol.
 license:             MIT
 license-file:        LICENSE
