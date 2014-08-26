@@ -11,7 +11,7 @@
       -- * flush
     , flushAll
     -- * version
-    , version
+    , version, versionString
     -- * noOp
     , noOp
     -- * append/prepend
@@ -34,13 +34,15 @@
 
 import Network(PortID(..))
 
-import Data.Default.Class(def)
+import Control.Monad
 
+import Data.Default.Class(def)
 import qualified Data.ByteString as S
+import qualified Data.ByteString.Char8 as S8
 
 import Database.Memcached.Binary.Types
 import Database.Memcached.Binary.Types.Exception
 import Database.Memcached.Binary.Internal.Definition
 import qualified Database.Memcached.Binary.Internal as I
 
-
+import Data.Version

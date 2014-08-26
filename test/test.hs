@@ -16,6 +16,7 @@ import Data.Default.Class
 import Data.Maybe
 import Data.Word
 import Data.Typeable
+import Data.Version
 import qualified Data.ByteString.Char8 as S
 import qualified Data.ByteString.Lazy.Char8 as L
 
@@ -156,8 +157,9 @@ testDelete = testGroup "delete"
         ]
     ]
 
-testIncrDecr :: Test
-testIncrDecr = testGroup "increment/decrement"
+-- https://code.google.com/p/memcached/wiki/ReleaseNotes1417
+testIncrDecr :: Version -> Test
+testIncrDecr v = testGroup "increment/decrement"
     [ testGroup "IO module"
         [ testGroup "increment"
             [ testMc "foo" $ \c ->
@@ -172,7 +174,7 @@ testIncrDecr = testGroup "increment/decrement"
                 a <- McIO.increment 0 "notexist" 10 10 c
                 b <- McIO.get_ "notexist" c
                 a @?= 10
-                b @?= "10"
+                when (v >= ev) $ b @?= "10"
             ]
         , testGroup "decrement"
             [ testMc "foo" $ \c ->
@@ -187,7 +189,7 @@ testIncrDecr = testGroup "increment/decrement"
                 a <- McIO.decrement 0 "notexist" 10 10 c
                 b <- McIO.get_ "notexist" c
                 a @?= 10
-                b @?= "10"
+                when (v >= ev) $ b @?= "10"
             ]
         ]
     , testGroup "Maybe module"
@@ -206,7 +208,7 @@ testIncrDecr = testGroup "increment/decrement"
                 a <- McMaybe.increment 0 "notexist" 10 10 c
                 b <- McIO.get_ "notexist" c
                 a @?= Just 10
-                b @?= "10"
+                when (v >= ev) $ b @?= "10"
             ]
         , testGroup "decrement'"
             [ testMc "foo" $ \c -> do
@@ -223,10 +225,12 @@ testIncrDecr = testGroup "increment/decrement"
                 a <- McMaybe.decrement 0 "notexist" 10 10 c
                 b <- McIO.get_ "notexist" c
                 a @?= Just 10
-                b @?= "10"
+                when (v >= ev) $ b @?= "10"
             ]
         ]
     ]
+  where
+    ev = Version [1,4,17] []
 
 testFlush :: Test
 testFlush = testGroup "flush"
@@ -247,12 +251,19 @@ testFlush = testGroup "flush"
 
 testVersion :: Test
 testVersion = testGroup "version"
-    [ testMc "IO module" $ \c -> do
-        v <- McIO.version c
-        assertBool (show v ++ " is not version like.") $ isVersionLike v
-    , testMc "Maybe module" $ \c -> do
-        Just v <- McMaybe.version c
-        assertBool (show v ++ " is not version like.") $ isVersionLike v
+    [ testGroup "versionString"
+        [ testMc "IO module" $ \c -> do
+            v <- McIO.versionString c
+            assertBool (show v ++ " is not version like.") $ isVersionLike v
+        , testMc "Maybe module" $ \c -> do
+            Just v <- McMaybe.versionString c
+            assertBool (show v ++ " is not version like.") $ isVersionLike v
+        ]
+    , testGroup "version"
+        [ testMc "IO module" $ \c -> do
+            v <- McIO.version c
+            assertEqual "version branch length" 3 (length $ versionBranch v)
+        ]
     ]
   where
     isVersionLike s0 = isJust $ do
@@ -333,17 +344,20 @@ testAppendPrepend = testGroup "append/prepend"
         ]
     ]
 
-testTouchGAT :: Test
-testTouchGAT = testGroup "touch/GAT"
+-- https://code.google.com/p/memcached/wiki/ReleaseNotes1414
+-- https://code.google.com/p/memcached/issues/detail?id=275
+testTouchGAT :: Version -> Test
+testTouchGAT v = testGroup "touch/GAT"
     [ testGroup "IO module"
         [ testGroup "touch"
             [ testMc "foo" $ \c -> do
                 a <- McMaybe.get_ "foo" c
                 McIO.touch 1 "foo" c
-                threadDelay 1100000
-                b <- McMaybe.get_ "foo" c
                 a @?= (Just "foovalue")
-                b @?= Nothing
+                when (v >= ev) $ do
+                    threadDelay 1100000
+                    b <- McMaybe.get_ "foo" c
+                    b @?= Nothing
             , testMc "notexist" $ \c ->
                 assertException 1 "Not found" $ McIO.touch 1 "notexist" c
             ]
@@ -351,11 +365,12 @@ testTouchGAT = testGroup "touch/GAT"
             [ testMc "foo" $ \c -> do
                 x <- McMaybe.get "foo" c
                 y <- McIO.getAndTouch 1 "foo" c
-                threadDelay 1100000
-                z <- McMaybe.get "foo" c
                 x @?= Just (0, "foovalue")
                 y @?= (0, "foovalue")
-                z @?= Nothing
+                when (v >= ev) $ do
+                    threadDelay 1100000
+                    z <- McMaybe.get "foo" c
+                    z @?= Nothing
             , testMc "notexist" $ \c ->
                 assertException 1 "Not found" $ McIO.getAndTouch 1 "notexist" c
             ]
@@ -363,11 +378,12 @@ testTouchGAT = testGroup "touch/GAT"
             [ testMc "foo" $ \c -> do
                 x <- McMaybe.get_ "foo" c
                 y <- McIO.getAndTouch_ 1 "foo" c
-                threadDelay 1100000
-                z <- McMaybe.get_ "foo" c
                 x @?= Just "foovalue"
                 y @?=      "foovalue"
-                z @?= Nothing
+                when (v >= ev) $ do
+                    threadDelay 1100000
+                    z <- McMaybe.get_ "foo" c
+                    z @?= Nothing
             , testMc "notexist" $ \c ->
                 assertException 1 "Not found" $ McIO.getAndTouch_ 1 "notexist" c
             ]
@@ -377,11 +393,12 @@ testTouchGAT = testGroup "touch/GAT"
             [ testMc "foo" $ \c -> do
                 a <- McMaybe.get_ "foo" c
                 r <- McMaybe.touch 1 "foo" c
-                threadDelay 1100000
-                b <- McMaybe.get_ "foo" c
                 a @?= (Just "foovalue")
                 r @?= True
-                b @?= Nothing
+                when (v >= ev) $ do
+                    threadDelay 1100000
+                    b <- McMaybe.get_ "foo" c
+                    b @?= Nothing
             , testMc "notexist" $ \c -> do
                 r <- McMaybe.touch 1 "notexist" c
                 a <- McMaybe.get "notexist" c
@@ -392,11 +409,12 @@ testTouchGAT = testGroup "touch/GAT"
             [ testMc "foo" $ \c -> do
                 a <- McMaybe.get "foo" c
                 r <- McMaybe.getAndTouch 1 "foo" c
-                threadDelay 1100000
-                b <- McMaybe.get_ "foo" c
                 a @?= Just (0, "foovalue")
                 r @?= Just (0, "foovalue")
-                b @?= Nothing
+                when (v >= ev) $ do
+                    threadDelay 1100000
+                    b <- McMaybe.get_ "foo" c
+                    b @?= Nothing
             , testMc "notexist" $ \c -> do
                 r <- McMaybe.getAndTouch 1 "notexist" c
                 a <- McMaybe.get "notexist" c
@@ -407,11 +425,12 @@ testTouchGAT = testGroup "touch/GAT"
             [ testMc "foo" $ \c -> do
                 a <- McMaybe.get_ "foo" c
                 r <- McMaybe.getAndTouch_ 1 "foo" c
-                threadDelay 1100000
-                b <- McMaybe.get_ "foo" c
                 a @?= Just "foovalue"
                 r @?= Just "foovalue"
-                b @?= Nothing
+                when (v >= ev) $ do
+                    threadDelay 1100000
+                    b <- McMaybe.get_ "foo" c
+                    b @?= Nothing
             , testMc "notexist" $ \c -> do
                 r <- McMaybe.getAndTouch_ 1 "notexist" c
                 a <- McMaybe.get "notexist" c
@@ -420,6 +439,8 @@ testTouchGAT = testGroup "touch/GAT"
             ]
         ]
     ]
+  where
+    ev = Version [1,4,14] []
 
 testModify :: Test
 testModify = testGroup "modify"
@@ -444,17 +465,21 @@ testModify_ = testGroup "modify_"
             McIO.modify_ 0 "notexist" (\f v -> (f,v)) c
     ]
 
+
+
 main :: IO ()
-main = bracket startMemcached terminateProcess $ \_ -> defaultMain
-    [ testGet
-    , testSetAddReplace
-    , testDelete
-    , testIncrDecr
-    , testFlush
-    , testVersion
-    , testNoOp
-    , testAppendPrepend
-    , testTouchGAT
-    , testModify
-    , testModify_
-    ]
+main = bracket startMemcached terminateProcess $ \_ -> do
+    v <- McIO.withConnection def McIO.version
+    defaultMain
+        [ testGet
+        , testSetAddReplace
+        , testDelete
+        , testIncrDecr v
+        , testFlush
+        , testVersion
+        , testNoOp
+        , testAppendPrepend
+        , testTouchGAT v
+        , testModify
+        , testModify_
+        ]
