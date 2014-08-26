@@ -16,7 +16,7 @@ library
                        Database.Memcached.Binary.Types
                        Database.Memcached.Binary.Internal
                        Database.Memcached.Binary.Internal.Definition
-  build-depends:       base                 >=4.7  && <4.8
+  build-depends:       base                 >=4.6  && <4.8
                      , bytestring           >=0.10 && <0.11
                      , network              >=2.6  && <2.7
                      , storable-endian      >=0.2  && <0.3
