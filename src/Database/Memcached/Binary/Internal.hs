@@ -16,7 +16,6 @@ import System.IO
 
 import Control.Monad
 import Control.Exception
-import Control.Concurrent.MVar
 
 import Data.Word
 import Data.Pool
@@ -30,20 +29,15 @@ import Database.Memcached.Binary.Types
 import Database.Memcached.Binary.Types.Exception
 import Database.Memcached.Binary.Internal.Definition
 
-data Connection
-    = Connection (MVar Handle)
-    | ConnectionPool (Pool Handle)
+newtype Connection = Connection (Pool Handle)
 
 withConnection :: ConnectInfo -> (Connection -> IO a) -> IO a
 withConnection i m = withSocketsDo $ bracket (connect i) close m
 
 connect :: ConnectInfo -> IO Connection
-connect i =
-    if numConnection i == 1
-    then fmap Connection $ connect' i >>= newMVar
-    else fmap ConnectionPool $ 
-        createPool (connect' i) (\h -> quit h >> hClose h) 1 
-        (connectionIdleTime i) (numConnection i)
+connect i = fmap Connection $ 
+    createPool (putStrLn "open" >> connect' i) (\h -> putStrLn "closed" >> quit h >> hClose h) 1 
+    (connectionIdleTime i) (numConnection i)
 
 connect' :: ConnectInfo -> IO Handle
 connect' i = loop (connectAuth i)
@@ -61,15 +55,10 @@ connect' i = loop (connectAuth i)
             auth a (\_ -> return h) (\_ _ -> loop as) h
 
 close :: Connection -> IO ()
-close (Connection mv) = do
-    h <- swapMVar mv (error "connection already closed")
-    quit h
-    hClose h
-close (ConnectionPool p) = destroyAllResources p
+close (Connection p) = destroyAllResources p
 
 useConnection :: (Handle -> IO a) -> Connection -> IO a
-useConnection f (Connection    mv) = withMVar mv f
-useConnection f (ConnectionPool p) = withResource p f
+useConnection f (Connection p) = withResource p f
 
 pokeWord8 :: Ptr a -> Word8 -> IO ()
 pokeWord8 = poke . castPtr
@@ -141,7 +130,7 @@ sendRequest op key elen epoke vlen vpoke opaque cas h =
 type Failure a = Word16 -> S.ByteString -> IO a
 
 peekResponse :: (Ptr Header -> IO a) -> Failure a -> Handle -> IO a
-peekResponse success failure h = bracket (mallocBytes 24) free $ \p ->
+peekResponse success failure h = allocaBytes 24 $ \p ->
     hGetBuf h p 24 >> peekWord16be (plusPtr p 6) >>= \st ->
     if st == 0
         then success p
