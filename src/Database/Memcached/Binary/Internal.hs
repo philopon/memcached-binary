@@ -36,7 +36,7 @@ withConnection i m = withSocketsDo $ bracket (connect i) close m
 
 connect :: ConnectInfo -> IO Connection
 connect i = fmap Connection $ 
-    createPool (putStrLn "open" >> connect' i) (\h -> putStrLn "closed" >> quit h >> hClose h) 1 
+    createPool (connect' i) (\h -> quit h >> hClose h) 1 
     (connectionIdleTime i) (numConnection i)
 
 connect' :: ConnectInfo -> IO Handle
