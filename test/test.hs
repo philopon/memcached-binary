@@ -25,9 +25,8 @@ import Database.Memcached.Binary.IO (Connection, withConnection)
 import qualified Database.Memcached.Binary.IO    as McIO
 import qualified Database.Memcached.Binary.Maybe as McMaybe
 
+import Test.Hspec
 import Test.HUnit hiding (Test)
-import Test.Framework
-import Test.Framework.Providers.HUnit
 
 startMemcached :: IO ProcessHandle
 startMemcached = do
@@ -44,9 +43,6 @@ precond c = do
     McIO.flushAll c
     void $ McIO.set 0 0 "foo" "foovalue"   c
     void $ McIO.set 1 0 "bar" "1234567890" c
-
-testMc :: TestName -> (Connection -> IO ()) -> Test
-testMc title m = testCase title $ withConnection def (\c -> precond c >> m c)
 
 newtype ByPassException = ByPassException String deriving (Typeable)
 instance Show ByPassException where
@@ -67,204 +63,219 @@ assertException ex msg m =
         , "occured:  " ++ show e
         ]
 
-testGet :: Test
-testGet = testGroup "get"
-    [ testGroup "IO module"
-        [ testGroup "get"
-            [ doTest "foo" (0, "foovalue")   McIO.get
-            , doTest "bar" (1, "1234567890") McIO.get
-            , doTestException "notexist"     McIO.get
-            ]
-        , testGroup "get_"
-            [ doTest "foo" "foovalue"    McIO.get_
-            , doTest "bar" "1234567890"  McIO.get_
-            , doTestException "notexist" McIO.get_
-            ]
-        ]
-    , testGroup "Maybe module"
-        [ testGroup "get"
-            [ doTest "foo"      (Just (0, "foovalue"))   McMaybe.get
-            , doTest "bar"      (Just (1, "1234567890")) McMaybe.get
-            , doTest "notexist" Nothing                  McMaybe.get
-            ]
-         , testGroup "get_"
-            [ doTest "foo"      (Just "foovalue")   McMaybe.get_
-            , doTest "bar"      (Just "1234567890") McMaybe.get_
-            , doTest "notexist" Nothing             McMaybe.get_
-            ]
-        ]
-    ]
+withConn :: (Connection -> IO a) -> IO a
+withConn m = withConnection def $ \c -> precond c >> m c
+
+main :: IO ()
+main = bracket startMemcached terminateProcess $ \_ -> hspec $ do
+    v <- runIO $ withConn McIO.version
+    testGet
+    testSetAddReplace
+    testDelete
+    testIncrDecr v
+    testFlush
+    testVersion
+    testNoOp
+    testAppendPrepend
+    testTouchGAT v
+    testModify
+
+testGet :: Spec
+testGet = context "get" $ do
+    context "IO module" $ do
+        describe "get" $ do
+            doTest "foo" (0, "foovalue")   "get" McIO.get
+            doTest "bar" (1, "1234567890") "get" McIO.get
+            doTestException                "get" McIO.get
+        describe "get_" $ do
+            doTest "foo" "foovalue"   "get_" McIO.get_
+            doTest "bar" "1234567890" "get_" McIO.get_
+            doTestException           "get_" McIO.get_
+    context "Maybe module" $ do
+        describe "get" $ do
+            doTest "foo" (Just (0, "foovalue"))   "get" McMaybe.get
+            doTest "bar" (Just (1, "1234567890")) "get" McMaybe.get
+            doTest "notexist" Nothing             "get" McMaybe.get
+        describe "get_" $ do
+            doTest "foo" (Just "foovalue")   "get_" McMaybe.get_
+            doTest "bar" (Just "1234567890") "get_" McMaybe.get_
+            doTest "notexist" Nothing        "get_" McMaybe.get_
   where
-    doTest key ex fn = testMc (S.unpack key) $ \c -> do
+    doTest key ex meth fn = it ("return " ++ show ex ++ " when " ++ meth ++ ' ': show key) $ withConn $ \c -> do
         v <- fn key c
         v @?= ex
-    doTestException key fn = testMc (S.unpack key) $ \c ->
-        assertException 1 "Not found" $ fn key c
+    doTestException meth fn = it ("throw exception(1) when " ++ meth ++ " notexist") $ withConn $ \c ->
+        assertException 1 "Not found" $ fn "notexist" c
 
-testSetAddReplace :: Test
-testSetAddReplace = testGroup "set/add/replace"
-    [ testGroup "set"
-        [ testMc "set foo to foomod" $ \c -> do
+testSetAddReplace :: Spec
+testSetAddReplace = context "set/add/replace" $ do
+    describe "set" $ do
+        it "set foo = (100, foomod)" $ withConn $ \c -> do
             McIO.set 100 0 "foo" "foomod" c
             v <- McIO.get "foo" c
             v @?= (100, "foomod")
-        , testMc "set notexist to exist" $ \c -> do
+        it "set notexist = exist" $ withConn $ \c -> do
             McIO.set 100 0 "notexist" "exist" c
             v <- McIO.get "notexist" c
             v @?= (100, "exist")
-        ]
-    , testGroup "add"
-        [ testMc "add foo to foomod" $ \c ->
+
+    describe "add" $ do
+        it "throw exception(2) when add exist key" $ withConn $ \c -> do
             assertException 2 "Data exists for key." $
                 McIO.add 100 0 "foo" "foomod" c
-        , testMc "add notexist to exist" $ \c -> do
+        it "add notexist = exist" $ withConn $ \c -> do
             McIO.add 100 0 "notexist" "exist" c
             v <- McIO.get "notexist" c
             v @?= (100, "exist")
-        ]
-    , testGroup "replace"
-        [ testMc "set foo to foomod" $ \c -> do
+
+    describe "replace" $ do
+        it "replace foo = foomod" $ withConn $ \c -> do
             McIO.replace 100 0 "foo" "foomod" c
             v <- McIO.get "foo" c
             v @?= (100, "foomod")
-        , testMc "set notexist to exist" $ \c ->
+        it "throw exception(1) when replace not exist key" $ withConn $ \c -> do
             assertException 1 "Not found" $
                 McIO.replace 100 0 "notexist" "exist" c
-        ]
-    ]
 
-testDelete :: Test
-testDelete = testGroup "delete"
-    [ testGroup "IO module"
-        [ testMc "foo" $ \c -> do
+
+testDelete :: Spec
+testDelete = context "delete" $ do
+    context "IO module" $ do
+        it "delete foo" $ withConn $ \c -> do
             McIO.delete "foo" c
             r <- McMaybe.get "foo" c
             r @?= Nothing
-        , testMc "notexist" $ \c ->
-            assertException 1 "Not found" $ McIO.delete "notexist" c
-        ]
-    , testGroup "Maybe module"
-        [ testMc "foo" $ \c -> do
+        it "throw exception(1) when delete notexist" $ withConn $
+            assertException 1 "Not found" . McIO.delete "notexist"
+
+    context "Maybe module" $ do
+        it "delete foo" $ withConn $ \c -> do
             b <- McMaybe.delete "foo" c
             r <- McMaybe.get "foo" c
             b @?= True
             r @?= Nothing
-        , testMc "notexist" $ \c -> do
+        it "delete notexist" $ withConn $ \c -> do
             b <- McMaybe.delete "notexist" c
             r <- McMaybe.get    "notexist" c
             b @?= False
             r @?= Nothing
-        ]
-    ]
 
 -- https://code.google.com/p/memcached/wiki/ReleaseNotes1417
-testIncrDecr :: Version -> Test
-testIncrDecr v = testGroup "increment/decrement"
-    [ testGroup "IO module"
-        [ testGroup "increment"
-            [ testMc "foo" $ \c ->
+testIncrDecr :: Version -> Spec
+testIncrDecr v = context "increment/decrement" $ do
+    context "IO module" $ do
+        describe "increment" $ do
+            it "throw exception(6) when increment non numeric value" $ withConn $ \c ->
                 assertException 6 "Non-numeric server-side value for incr or decr" $
                     McIO.increment 0 "foo" 10 10 c
-            , testMc "bar" $ \c -> do
+
+            it "increment bar" $ withConn $ \c -> do
                 a <- McIO.increment 0 "bar" 10 10 c
                 b <- McIO.get_ "bar" c
                 a @?= 1234567900
                 b @?= "1234567900"
-            , testMc "notexist" $ \c -> do
+
+            it "set initial value notexist" $ withConn $ \c -> do
+                when (v < ev) $ pendingWith msg
                 a <- McIO.increment 0 "notexist" 10 10 c
                 b <- McIO.get_ "notexist" c
                 a @?= 10
-                when (v >= ev) $ b @?= "10"
-            ]
-        , testGroup "decrement"
-            [ testMc "foo" $ \c ->
+                b @?= "10"
+
+        describe "decrement" $ do
+            it "throw exception(6) when increment non numeric value" $ withConn $ \c ->
                 assertException 6 "Non-numeric server-side value for incr or decr" $
                     McIO.decrement 0 "foo" 10 10 c
-            , testMc "bar" $ \c -> do
+
+            it "decrement bar" $ withConn $ \c -> do
                 a <- McIO.decrement 0 "bar" 10 10 c
                 b <- McIO.get_ "bar" c
                 a @?= 1234567880
                 b @?= "1234567880"
-            , testMc "notexist" $ \c -> do
+
+            it "set initial value notexist" $ withConn $ \c -> do
+                when (v < ev) $ pendingWith msg
                 a <- McIO.decrement 0 "notexist" 10 10 c
                 b <- McIO.get_ "notexist" c
                 a @?= 10
-                when (v >= ev) $ b @?= "10"
-            ]
-        ]
-    , testGroup "Maybe module"
-        [ testGroup "increment"
-            [ testMc "foo" $ \c -> do
+                b @?= "10"
+
+    context "Maybe module" $ do
+        describe "increment" $ do
+            it "return Nothing when increment non numeric value" $ withConn $ \c -> do
                 r <- McMaybe.increment 0 "foo" 10 10 c
                 b <- McIO.get_ "foo" c
                 r @?= Nothing
                 b @?= "foovalue"
-            , testMc "bar" $ \c -> do
+            it "increment bar" $ withConn $ \c -> do
                 a <- McMaybe.increment 0 "bar" 10 10 c
                 b <- McIO.get_ "bar" c
                 a @?= Just 1234567900
                 b @?= "1234567900"
-            , testMc "notexist" $ \c -> do
+            it "set initial value notexist" $ withConn $ \c -> do
+                when (v < ev) $ pendingWith msg
                 a <- McMaybe.increment 0 "notexist" 10 10 c
                 b <- McIO.get_ "notexist" c
                 a @?= Just 10
-                when (v >= ev) $ b @?= "10"
-            ]
-        , testGroup "decrement'"
-            [ testMc "foo" $ \c -> do
+                b @?= "10"
+
+        describe "decrement" $ do
+            it "return Nothing when decrement non numeric value" $ withConn $ \c -> do
                 r <- McMaybe.decrement 0 "foo" 10 10 c
                 b <- McIO.get_ "foo" c
                 r @?= Nothing
                 b @?= "foovalue"
-            , testMc "bar" $ \c -> do
+            it "decrement bar" $ withConn $ \c -> do
                 a <- McMaybe.decrement 0 "bar" 10 10 c
                 b <- McIO.get_ "bar" c
                 a @?= Just 1234567880
                 b @?= "1234567880"
-            , testMc "notexist" $ \c -> do
+            it "set initial value notexist" $ withConn $ \c -> do
+                when (v < ev) $ pendingWith msg
                 a <- McMaybe.decrement 0 "notexist" 10 10 c
                 b <- McIO.get_ "notexist" c
                 a @?= Just 10
-                when (v >= ev) $ b @?= "10"
-            ]
-        ]
-    ]
+                b @?= "10"
+ 
   where
-    ev = Version [1,4,17] []
+    ev  = Version [1,4,17] []
+    msg = "memcached(< 1.4.17) bug. see: https://code.google.com/p/memcached/wiki/ReleaseNotes1417"
 
-testFlush :: Test
-testFlush = testGroup "flush"
-    [ testGroup "IO module"
-        [ testMc "flushAll" $ \c -> do
-            McIO.flushAll c
-            a <- McMaybe.get "foo" c
-            a @?= Nothing
-        ]
-    , testGroup "Maybe module"
-        [ testMc "flushAll" $ \c -> do
-            r <- McMaybe.flushAll c
-            a <- McMaybe.get "foo" c
-            r @?= True
-            a @?= Nothing
-        ]
-    ]
+testFlush :: Spec
+testFlush = context "flush" $ do
+    context "IO module" $ do
+        describe "flushAll" $ do
+            it "flush all data" $ withConn $ \c -> do
+                McIO.flushAll c
+                a <- McMaybe.get "foo" c
+                a @?= Nothing
 
-testVersion :: Test
-testVersion = testGroup "version"
-    [ testGroup "versionString"
-        [ testMc "IO module" $ \c -> do
-            v <- McIO.versionString c
-            assertBool (show v ++ " is not version like.") $ isVersionLike v
-        , testMc "Maybe module" $ \c -> do
-            Just v <- McMaybe.versionString c
-            assertBool (show v ++ " is not version like.") $ isVersionLike v
-        ]
-    , testGroup "version"
-        [ testMc "IO module" $ \c -> do
-            v <- McIO.version c
-            assertEqual "version branch length" 3 (length $ versionBranch v)
-        ]
-    ]
+    context "Maybe module" $ do
+        describe "flushAll" $ do
+            it "flush all data and return True" $ withConn $ \c -> do
+                r <- McMaybe.flushAll c
+                a <- McMaybe.get "foo" c
+                r @?= True
+                a @?= Nothing
+
+testVersion :: Spec
+testVersion = context "version" $ do
+    context "IO module" $ do
+        describe "versionString" $
+            it "return version bytestring" $ withConn $ \c -> do
+                v <- McIO.versionString c
+                assertBool (show v ++ " is not version like.") $ isVersionLike v
+
+        describe "version" $
+            it "return Version" $ withConn $ \c -> do
+                v <- McIO.version c
+                assertEqual "version branch length" 3 (length $ versionBranch v)
+
+    context "Maybe module" $ do
+        describe "versionString" $
+            it "returns version bytestring" $ withConn $ \c -> do
+                Just v <- McMaybe.versionString c
+                assertBool (show v ++ " is not version like.") $ isVersionLike v
   where
     isVersionLike s0 = isJust $ do
         (_, s1) <- S.readInt s0
@@ -274,212 +285,198 @@ testVersion = testGroup "version"
         (_, s3) <- S.readInt (S.tail s2)
         unless (S.null s3) Nothing
 
-testNoOp :: Test
-testNoOp = testGroup "noOp"
-    [ testMc "IO module" McIO.noOp
-    , testMc "Maybe module" $ \c -> do
-        b <- McMaybe.noOp c
-        b @?= True
-    ]
+testNoOp :: Spec
+testNoOp = context "noOp" $ do
+    context "IO module" $
+        it "is noop" $ withConn McIO.noOp
+    context "Maybe module" $
+        it "is noop and returns True" $ withConn $ \c -> do
+            b <- McMaybe.noOp c
+            b @?= True
 
-testAppendPrepend :: Test
-testAppendPrepend = testGroup "append/prepend"
-    [ testGroup "IO module"
-        [ testGroup "append"
-            [ testMc "foo" $ \c -> do
+testAppendPrepend :: Spec
+testAppendPrepend = context "append/prepend" $ do
+    context "IO module" $ do
+        describe "append" $ do
+            it "append !! to foo" $ withConn $ \c -> do
                 McIO.append "foo" "!!" c
                 a <- McIO.get_ "foo" c
                 a @?= "foovalue!!"
-            , testMc "bar" $ \c -> do
+            it "append !! to bar" $ withConn $ \c -> do
                 McIO.append "bar" "!!" c
                 a <- McIO.get_ "bar" c
                 a @?= "1234567890!!"
-            , testMc "notexist" $ \c ->
+            it "throws exception(5) when not exist." $ withConn $ \c ->
                 assertException 5 "Not stored." $ McIO.append "notexist" "!!" c
-            ]
-        , testGroup "prepend"
-            [ testMc "foo" $ \c -> do
+        
+        describe "prepend" $ do
+            it "prepend !! to foo" $ withConn $ \c -> do
                 McIO.prepend "foo" "!!" c
                 a <- McIO.get_ "foo" c
                 a @?= "!!foovalue"
-            , testMc "bar" $ \c -> do
+
+            it "prepend !! to bar" $ withConn $ \c -> do
                 McIO.prepend "bar" "!!" c
                 a <- McIO.get_ "bar" c
                 a @?= "!!1234567890"
-            , testMc "notexist" $ \c ->
+
+            it "throws exception(5) when not exist" $ withConn $ \c ->
                 assertException 5 "Not stored." $ McIO.prepend "notexist" "!!" c
-            ]
-        ]
-    , testGroup "maybe module"
-        [ testGroup "append'"
-            [ testMc "foo" $ \c -> do
+
+    context "Maybe module" $ do
+        describe "append" $ do
+            it "append !! to foo and return True" $ withConn $ \c -> do
                 b <- McMaybe.append "foo" "!!" c
                 a <- McIO.get_ "foo" c
                 b @?= True
                 a @?= "foovalue!!"
-            , testMc "bar" $ \c -> do
+
+            it "append !! to bar and return True" $ withConn $ \c -> do
                 b <- McMaybe.append "bar" "!!" c
                 a <- McIO.get_ "bar" c
                 b @?= True
                 a @?= "1234567890!!"
-            , testMc "notexist" $ \c -> do
+
+            it "return False when not exist" $ withConn $ \c -> do
                 b <- McMaybe.append "notexist" "!!" c
                 b @?= False
-            ]
-        , testGroup "prepend'"
-            [ testMc "foo" $ \c -> do
+
+        describe "prepend" $ do
+            it "prepend !! to foo and return True" $ withConn $ \c -> do
                 b <- McMaybe.prepend "foo" "!!" c
                 a <- McIO.get_ "foo" c
                 b @?= True
                 a @?= "!!foovalue"
-            , testMc "bar" $ \c -> do
+
+            it "prepend !! to baar and return True" $ withConn $ \c -> do
                 b <- McMaybe.prepend "bar" "!!" c
                 a <- McIO.get_ "bar" c
                 b @?= True
                 a @?= "!!1234567890"
-            , testMc "notexist" $ \c -> do
+
+            it "return False when not exist" $ withConn $ \c -> do
                 b <- McMaybe.prepend "notexist" "!!" c
                 b @?= False
-            ]
-        ]
-    ]
 
--- https://code.google.com/p/memcached/wiki/ReleaseNotes1414
--- https://code.google.com/p/memcached/issues/detail?id=275
-testTouchGAT :: Version -> Test
-testTouchGAT v = testGroup "touch/GAT"
-    [ testGroup "IO module"
-        [ testGroup "touch"
-            [ testMc "foo" $ \c -> do
+testTouchGAT :: Version -> Spec
+testTouchGAT v = context "touch/GAT" $ do
+    context "IO module" $ do
+        describe "touch" $ do
+            it "touch 1s and expire it." $ withConn $ \c -> do
+                when (v < ev) $ pendingWith msg
                 a <- McMaybe.get_ "foo" c
                 McIO.touch 1 "foo" c
                 a @?= (Just "foovalue")
-                when (v >= ev) $ do
-                    threadDelay 1100000
-                    b <- McMaybe.get_ "foo" c
-                    b @?= Nothing
-            , testMc "notexist" $ \c ->
+                threadDelay 1100000
+                b <- McMaybe.get_ "foo" c
+                b @?= Nothing
+
+            it "throws exception(1) when not exist" $ withConn $ \c ->
                 assertException 1 "Not found" $ McIO.touch 1 "notexist" c
-            ]
-        , testGroup "getAndTouch"
-            [ testMc "foo" $ \c -> do
+
+        describe "getAndTouch" $ do
+            it "touch 1s, return (flag, value), and expire it" $ withConn $ \c -> do
+                when (v < ev) $ pendingWith msg
                 x <- McMaybe.get "foo" c
                 y <- McIO.getAndTouch 1 "foo" c
                 x @?= Just (0, "foovalue")
                 y @?= (0, "foovalue")
-                when (v >= ev) $ do
-                    threadDelay 1100000
-                    z <- McMaybe.get "foo" c
-                    z @?= Nothing
-            , testMc "notexist" $ \c ->
+                threadDelay 1100000
+                z <- McMaybe.get "foo" c
+                z @?= Nothing
+
+            it "throws exception(1) when not exist" $ withConn $ \c ->
                 assertException 1 "Not found" $ McIO.getAndTouch 1 "notexist" c
-            ]
-        , testGroup "getAndTouch_"
-            [ testMc "foo" $ \c -> do
+
+        describe "getAndTouch_" $ do
+            it "touch 1s, return value, and expire it" $ withConn $ \c -> do
+                when (v < ev) $ pendingWith msg
                 x <- McMaybe.get_ "foo" c
                 y <- McIO.getAndTouch_ 1 "foo" c
                 x @?= Just "foovalue"
                 y @?=      "foovalue"
-                when (v >= ev) $ do
-                    threadDelay 1100000
-                    z <- McMaybe.get_ "foo" c
-                    z @?= Nothing
-            , testMc "notexist" $ \c ->
+                threadDelay 1100000
+                z <- McMaybe.get_ "foo" c
+                z @?= Nothing
+
+            it "throws exception(1) when not exist" $ withConn $ \c ->
                 assertException 1 "Not found" $ McIO.getAndTouch_ 1 "notexist" c
-            ]
-        ]
-    , testGroup "Maybe module"
-        [ testGroup "touch"
-            [ testMc "foo" $ \c -> do
+
+    context "Maybe module" $ do
+        describe "touch" $ do
+            it "touch 1s, return True, and expire it." $ withConn $ \c -> do
+                when (v < ev) $ pendingWith msg
                 a <- McMaybe.get_ "foo" c
                 r <- McMaybe.touch 1 "foo" c
                 a @?= (Just "foovalue")
                 r @?= True
-                when (v >= ev) $ do
-                    threadDelay 1100000
-                    b <- McMaybe.get_ "foo" c
-                    b @?= Nothing
-            , testMc "notexist" $ \c -> do
+                threadDelay 1100000
+                b <- McMaybe.get_ "foo" c
+                b @?= Nothing
+
+            it "return False when not exist" $ withConn $ \c -> do
                 r <- McMaybe.touch 1 "notexist" c
                 a <- McMaybe.get "notexist" c
                 r @?= False
                 a @?= Nothing
-            ]
-        , testGroup "getAndTouch'/getMaybeAndTouch"
-            [ testMc "foo" $ \c -> do
+
+        describe "getAndTouch" $ do
+            it "touch 1s, return (flag, value), and expire it" $ withConn $ \c -> do
+                when (v < ev) $ pendingWith msg
                 a <- McMaybe.get "foo" c
                 r <- McMaybe.getAndTouch 1 "foo" c
                 a @?= Just (0, "foovalue")
                 r @?= Just (0, "foovalue")
-                when (v >= ev) $ do
-                    threadDelay 1100000
-                    b <- McMaybe.get_ "foo" c
-                    b @?= Nothing
-            , testMc "notexist" $ \c -> do
+                threadDelay 1100000
+                b <- McMaybe.get_ "foo" c
+                b @?= Nothing
+
+            it "return Nothing when not exist" $ withConn $ \c -> do
                 r <- McMaybe.getAndTouch 1 "notexist" c
                 a <- McMaybe.get "notexist" c
                 r @?= Nothing
                 a @?= Nothing
-            ]
-        , testGroup "getAndTouch'_/getMaybeAndTouch_"
-            [ testMc "foo" $ \c -> do
+
+        describe "getAndTouch_" $ do
+            it "touch 1s, return value, and expire it" $ withConn $ \c -> do
+                when (v < ev) $ pendingWith msg
                 a <- McMaybe.get_ "foo" c
                 r <- McMaybe.getAndTouch_ 1 "foo" c
                 a @?= Just "foovalue"
                 r @?= Just "foovalue"
-                when (v >= ev) $ do
-                    threadDelay 1100000
-                    b <- McMaybe.get_ "foo" c
-                    b @?= Nothing
-            , testMc "notexist" $ \c -> do
+                threadDelay 1100000
+                b <- McMaybe.get_ "foo" c
+                b @?= Nothing
+
+            it "return Nothing when not exist" $ withConn $ \c -> do
                 r <- McMaybe.getAndTouch_ 1 "notexist" c
                 a <- McMaybe.get "notexist" c
                 r @?= Nothing
                 a @?= Nothing
-            ]
-        ]
-    ]
   where
-    ev = Version [1,4,14] []
+    ev  = Version [1,4,14] []
+    msg = "memcached(< 1.4.14) bug. see: https://code.google.com/p/memcached/wiki/ReleaseNotes1414 & https://code.google.com/p/memcached/issues/detail?id=275"
 
-testModify :: Test
-testModify = testGroup "modify"
-    [ testMc "reverse foo" $ \c -> do
-        r <- McIO.modify 0 "foo" (\f v -> (f + 100, L.reverse v, v)) c
-        a <- McMaybe.get "foo" c
-        r @?= "foovalue"
-        a @?= Just (100, "eulavoof")
-    , testMc "notexist" $ \c ->
-        assertException 1 "Not found" $
-            McIO.modify 0 "notexist" (\f v -> (f,v,())) c
-    ]
+testModify :: Spec
+testModify = context "modify" $ do
+    context "IO monad" $ do
+        describe "modify" $ do
+            it "reverse foo value and return original" $ withConn $ \c -> do
+                r <- McIO.modify 0 "foo" (\f v -> (f + 100, L.reverse v, v)) c
+                a <- McMaybe.get "foo" c
+                r @?= "foovalue"
+                a @?= Just (100, "eulavoof")
 
-testModify_ :: Test
-testModify_ = testGroup "modify_"
-    [ testMc "reverse foo" $ \c -> do
-        McIO.modify_ 0 "foo" (\f v -> (f + 100, L.reverse v)) c
-        a <- McMaybe.get "foo" c
-        a @?= Just (100, "eulavoof")
-    , testMc "notexist" $ \c ->
-        assertException 1 "Not found" $
-            McIO.modify_ 0 "notexist" (\f v -> (f,v)) c
-    ]
+            it "throw exception(1) when not exist" $ withConn $ \c -> do
+                assertException 1 "Not found" $
+                    McIO.modify 0 "notexist" (\f v -> (f,v,())) c
 
+        describe "modify_" $ do
+            it "reverse foo value" $ withConn $ \c -> do
+                McIO.modify_ 0 "foo" (\f v -> (f + 100, L.reverse v)) c
+                a <- McMaybe.get "foo" c
+                a @?= Just (100, "eulavoof")
 
-
-main :: IO ()
-main = bracket startMemcached terminateProcess $ \_ -> do
-    v <- McIO.withConnection def McIO.version
-    defaultMain
-        [ testGet
-        , testSetAddReplace
-        , testDelete
-        , testIncrDecr v
-        , testFlush
-        , testVersion
-        , testNoOp
-        , testAppendPrepend
-        , testTouchGAT v
-        , testModify
-        , testModify_
-        ]
+            it "throw exception(1) when not exist" $ withConn $ \c -> do
+                assertException 1 "Not found" $
+                    McIO.modify_ 0 "notexist" (\f v -> (f,v)) c
