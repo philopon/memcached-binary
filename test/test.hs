@@ -55,7 +55,9 @@ assertException ex msg m =
     (m >> throwIO (ByPassException "exception not occured.")) `catch`
     (\e -> case fromException e :: Maybe MemcachedException of
         Nothing -> assertFn e
-        Just e'@(MemcachedException i _) -> unless (i == ex) (assertFn e'))
+        Just e'@(MemcachedException i _) -> unless (i == ex) (assertFn e')
+        Just e' -> assertFn e'
+        )
   where
     assertFn e = assertFailure $ unlines
         [ "not expected exception occured:"

@@ -8,14 +8,17 @@ import Data.Word
 import Data.Typeable
 import qualified Data.ByteString as S
 
-data MemcachedException = MemcachedException
-    {-# UNPACK #-} !Word16 {-# UNPACK #-} !S.ByteString
+data MemcachedException
+    = MemcachedException {-# UNPACK #-} !Word16 {-# UNPACK #-} !S.ByteString
+    | DataReadFailed
+    | VersionParseFailed
     deriving (Show, Typeable)
 
 instance Exception MemcachedException
 
 #define defExceptionP(n,w) n :: MemcachedException -> Bool;\
-n (MemcachedException i _) = i == w
+n (MemcachedException i _) = i == w;\
+n _ = False
 
 defExceptionP(isKeyNotFound                   , 0x01)
 defExceptionP(isKeyExists                     , 0x02)

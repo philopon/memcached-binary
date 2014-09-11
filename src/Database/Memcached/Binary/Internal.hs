@@ -47,12 +47,12 @@ connect' i = loop (connectAuth i)
 
     loop [a] = do
         h <- connectTo (connectHost i) (connectPort i)
-        auth a (\_ -> return h) (\w m -> throwIO $ MemcachedException w m) h
+        auth a (\_ -> return h) throwIO h
 
     loop (a:as) = do
         h <- connectTo (connectHost i) (connectPort i)
         handle (\(_::IOError) -> loop as) $
-            auth a (\_ -> return h) (\_ _ -> loop as) h
+            auth a (\_ -> return h) (\_ -> loop as) h
 
 close :: Connection -> IO ()
 close (Connection p) = destroyAllResources p
@@ -127,16 +127,20 @@ sendRequest op key elen epoke vlen vpoke opaque cas h =
         hFlush h
 {-# INLINE sendRequest #-}
 
-type Failure a = Word16 -> S.ByteString -> IO a
+type Failure a = MemcachedException -> IO a
 
 peekResponse :: (Ptr Header -> IO a) -> Failure a -> Handle -> IO a
-peekResponse success failure h = allocaBytes 24 $ \p ->
-    hGetBuf h p 24 >> peekWord16be (plusPtr p 6) >>= \st ->
-    if st == 0
-        then success p
+peekResponse success failure h = allocaBytes 24 $ \p -> do
+    len <- hGetBuf h p 24
+    if len /= 24
+        then failure DataReadFailed
         else do
-            bl <- peekWord32be (plusPtr p 8)
-            failure st =<< S.hGet h (fromIntegral bl)
+            peekWord16be (plusPtr p 6) >>= \st ->
+                if st == 0
+                    then success p
+                    else do
+                        bl <- peekWord32be (plusPtr p 8)
+                        failure . MemcachedException st =<< S.hGet h (fromIntegral bl)
 {-# INLINE peekResponse #-}
 
 withRequest :: OpCode -> Key -> Word8 -> (Ptr Request -> IO ())
@@ -175,27 +179,30 @@ inspectResponse h p = do
     v <- L.hGet h $ fromIntegral tl - fromIntegral el - fromIntegral kl
     return (e,k,v)
 
-getSuccessCallback :: (Flags -> Value -> IO a)
+getSuccessCallback :: (Flags -> Value -> IO a) -> Failure a
                    -> Handle -> Ptr Header -> IO a
-getSuccessCallback success h p = do
+getSuccessCallback success failure h p = do
     elen <- getExtraLength p
     tlen <- getTotalLength p
-    void $ hGetBuf h p 4
-    flags <- peekWord32be p
-    value <- L.hGet h (fromIntegral tlen - fromIntegral elen)
-    success flags value
+    len  <- hGetBuf h p 4
+    if len /= 4
+        then failure DataReadFailed
+        else do
+            flags <- peekWord32be p
+            value <- L.hGet h (fromIntegral tlen - fromIntegral elen)
+            success flags value
 
 get :: (Flags -> Value -> IO a) -> Failure a
     -> Key -> Handle -> IO a
 get success failure key = 
     withRequest opGet key 0 nop 0 nop (CAS 0)
-    (getSuccessCallback success) failure
+    (getSuccessCallback success failure) failure
 
 getWithCAS :: (CAS -> Flags -> Value -> IO a) -> Failure a
            -> Key -> Handle -> IO a
 getWithCAS success failure key =
     withRequest opGet key 0 nop 0 nop (CAS 0)
-    (\h p -> getCAS p >>= \c -> getSuccessCallback (success c) h p) failure
+    (\h p -> getCAS p >>= \c -> getSuccessCallback (success c) failure h p) failure
 
 setAddReplace :: IO a -> Failure a -> OpCode -> CAS
               -> Key -> Value -> Flags -> Expiry -> Handle -> IO a
@@ -224,13 +231,15 @@ incrDecr success failure op cas key delta initial expiry =
         pokeWord32be (plusPtr p 16) expiry
 
     success' h p = do
-        void $ hGetBuf h p 8
-        peekWord64be p >>= success
+        len <- hGetBuf h p 8
+        if len /= 8
+            then failure DataReadFailed
+            else peekWord64be p >>= success
 
 quit :: Handle -> IO ()
 quit h = do
     sendRequest  opQuit "" 0 nop 0 nop 0 (CAS 0) h
-    peekResponse (\_ -> return ()) (\_ _ -> return ()) h
+    peekResponse (\_ -> return ()) (\_ -> return ()) h
 
 flushAll :: IO a -> Failure a -> Handle -> IO a
 flushAll success =
@@ -261,7 +270,7 @@ stats h = loop H.empty
   where
     loop m = do
         sendRequest opStat "" 0 nop 0 nop 0 (CAS 0) h
-        peekResponse (success m) (\w s -> throwIO $ MemcachedException w s) h
+        peekResponse (success m) throwIO h
 
     success m p = getTotalLength p >>= \tl ->
         if tl == 0
@@ -280,7 +289,7 @@ touch :: (Flags -> Value -> IO a) -> Failure a -> OpCode
       -> Key -> Expiry -> Handle -> IO a
 touch success failure op key e =
     withRequest op key 4 (flip pokeWord32be e) 0 nop (CAS 0)
-    (getSuccessCallback success) failure
+    (getSuccessCallback success failure) failure
 
 saslListMechs :: (S.ByteString -> IO a) -> Failure a
               -> Handle -> IO a

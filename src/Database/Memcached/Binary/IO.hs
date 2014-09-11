@@ -20,11 +20,11 @@ successNoReturn  = return ()
 {-# INLINE successNoReturn #-}
 
 failureHasReturn :: I.Failure (HasReturn a)
-failureHasReturn i m = throwIO $ MemcachedException i m
+failureHasReturn = throwIO
 {-# INLINE failureHasReturn #-}
 
 failureNoReturn :: I.Failure NoReturn
-failureNoReturn i m = throwIO $ MemcachedException i m
+failureNoReturn = throwIO
 {-# INLINE failureNoReturn #-}
 
 #include "Common.hs"

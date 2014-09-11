@@ -18,12 +18,11 @@ successNoReturn  = return Nothing
 {-# INLINE successNoReturn #-}
 
 failureHasReturn :: I.Failure (HasReturn a)
-failureHasReturn i m = return . Left $ MemcachedException i m
+failureHasReturn = return . Left
 {-# INLINE failureHasReturn #-}
 
 failureNoReturn :: I.Failure NoReturn
-failureNoReturn i m = return . Just $ MemcachedException i m
+failureNoReturn = return . Just
 {-# INLINE failureNoReturn #-}
-
 #include "Common.hs"
 

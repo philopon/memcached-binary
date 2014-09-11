@@ -77,7 +77,7 @@ flushAll = I.useConnection $ I.flushAll successNoReturn failureNoReturn
 
 version :: I.Connection -> IO (HasReturn Version)
 version = I.useConnection $ I.version (\s -> case readVersion s of
-    Nothing -> failureHasReturn (-1) "version parse failed"
+    Nothing -> failureHasReturn VersionParseFailed
     Just v  -> successHasReturn v) failureHasReturn
   where
     readVersion s0 = do

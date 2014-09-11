@@ -18,11 +18,11 @@ successNoReturn  = return True
 {-# INLINE successNoReturn #-}
 
 failureHasReturn :: I.Failure (HasReturn a)
-failureHasReturn _ _ = return Nothing
+failureHasReturn _ = return Nothing
 {-# INLINE failureHasReturn #-}
 
 failureNoReturn :: I.Failure NoReturn
-failureNoReturn _ _ = return False
+failureNoReturn _ = return False
 {-# INLINE failureNoReturn #-}
 
 #include "Common.hs"
